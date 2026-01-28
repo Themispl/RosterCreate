@@ -1,7 +1,7 @@
 import requests
 import sys
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class HotelRosterAPITester:
     def __init__(self, base_url="https://rota-maker.preview.emergentagent.com"):
