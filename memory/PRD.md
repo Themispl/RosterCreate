@@ -17,24 +17,21 @@ Create a program that generates a monthly and weekly staff roster for a hotel, e
 7. Color-coded display matching reference image
 8. Excel export with formatting and colors
 
-## Scheduling Constraints
-- 8-hour shifts
-- 5 work days, 2 days off per week
-- Minimum 11 hours rest between shifts
-- No more than 5 consecutive work days
-- Quick turnaround rule (no Afternoon → Morning next day)
+## NEW Scheduling Constraints (Updated December 2025)
+- Night shift: 5 consecutive days, then 2 days off, then PM shift
+- Days off MUST be consecutive (together)
+- Alternate weeks: Morning one week, Afternoon next week
+- Max 5 night shifts per person per month
+- Balance days off across staff (not everyone off same day)
+- Most staff allocated to Morning/Afternoon shifts
 
-## Color Coding
-| Shift | Color | Hex |
-|-------|-------|-----|
+## Color Coding (User Customizable)
+| Shift | Default Color | Hex |
+|-------|---------------|-----|
 | 7 (Morning) | Red | #FF6666 |
 | 15 (Afternoon) | Green | #009933 |
 | 23 (Night) | Blue | #3366CC |
 | 9 | Yellow | #FFFF66 |
-| 11 | Light Blue | #6699FF |
-| 12 | Purple | #9966CC |
-| 8 | Pink | #FF9999 |
-| 16 | Maroon | #CC0033 |
 | 0 (Day Off) | Light Pink | #FF9999 |
 | V (Vacation) | Dark Purple | #663399 |
 | L (Leave) | Orange | #CC6600 |
@@ -42,24 +39,26 @@ Create a program that generates a monthly and weekly staff roster for a hotel, e
 ## What's Been Implemented (December 2025)
 
 ### Backend (FastAPI)
-- ✅ Employee CRUD endpoints (create, read, update, delete)
+- ✅ Employee CRUD endpoints with position-based sorting
 - ✅ CSV import endpoint for bulk employee upload
-- ✅ Roster generation algorithm with all constraints
-- ✅ Excel export with color formatting
-- ✅ MongoDB integration for data persistence
+- ✅ NEW roster generation algorithm with all constraints
+- ✅ Excel export with customizable colors
+- ✅ Color configuration save/load endpoints
+- ✅ Week view support
 
 ### Frontend (React)
 - ✅ Dark sidebar with staff management
+- ✅ **Position ordering: AGSM → GSC → GSA → Welcome Agent**
+- ✅ **Week/Month view toggle with week navigation**
+- ✅ **Color legend with click-to-edit functionality**
+- ✅ **Wider name column (280px) for full names**
 - ✅ CSV upload zone with drag & drop
 - ✅ Manual employee entry dialog
-- ✅ Month/Year picker
-- ✅ Roster grid with exact color coding from reference
-- ✅ Cell click edit dialog for vacation/leave marking
+- ✅ Roster grid with exact color coding
+- ✅ Cell click edit dialog
 - ✅ Generate Roster button
 - ✅ Export Excel button
-- ✅ Color legend display
 - ✅ Toast notifications (Sonner)
-- ✅ Responsive design
 
 ## Architecture
 ```
@@ -72,27 +71,22 @@ Frontend (React + Tailwind) → API (FastAPI) → MongoDB
 
 ### P0 (Critical) - COMPLETED
 - [x] Staff management (CRUD)
-- [x] Roster generation
-- [x] Excel export
-- [x] Color coding
+- [x] Roster generation with new algorithm
+- [x] Excel export with custom colors
+- [x] Week/Month views
+- [x] Color customization
 
 ### P1 (High Priority) - Future
-- [ ] Weekly view toggle
 - [ ] Save/load roster presets
 - [ ] Bulk vacation entry
+- [ ] Print-friendly CSS
 
 ### P2 (Medium Priority) - Future
-- [ ] Print-friendly CSS
 - [ ] Employee availability preferences
 - [ ] Overtime tracking
-
-### P3 (Low Priority) - Future
-- [ ] Email roster to employees
-- [ ] Mobile app version
-- [ ] Analytics dashboard
+- [ ] Copy previous month feature
 
 ## Next Action Items
-1. Add weekly view toggle for week-by-week roster display
-2. Implement save/load roster templates
-3. Add bulk vacation entry for multiple employees
-4. Consider analytics dashboard for shift distribution insights
+1. Implement save/load roster templates
+2. Add bulk vacation entry for multiple employees
+3. Add "Copy Previous Month" feature
