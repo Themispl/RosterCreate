@@ -356,23 +356,32 @@ def main():
         current_year = datetime.now().year
         current_month = datetime.now().month
         
+        employee_ids = [emp1_id, emp2_id]
+        if emp3_id:
+            employee_ids.append(emp3_id)
+        if emp4_id:
+            employee_ids.append(emp4_id)
+        
+        # Test month view
         roster_data = tester.test_generate_roster(
             current_year, 
             current_month, 
-            [emp1_id, emp2_id, emp3_id, emp4_id] if emp3_id and emp4_id else [emp1_id, emp2_id]
+            employee_ids,
+            "month"
         )
         
         if roster_data:
             print(f"   Generated roster with {len(roster_data.get('roster', {}))} employee schedules")
             print(f"   Days info: {len(roster_data.get('days_info', []))} days")
             
+            # Test business logic constraints
+            tester.test_night_shift_constraints(roster_data)
+            tester.test_days_off_consecutive(roster_data)
+            
+            # Test week view
+            tester.test_week_view_generation(current_year, current_month, employee_ids)
+            
             # Test 5: Excel export
-            employee_ids = [emp1_id, emp2_id]
-            if emp3_id:
-                employee_ids.append(emp3_id)
-            if emp4_id:
-                employee_ids.append(emp4_id)
-                
             tester.test_export_excel(current_year, current_month, employee_ids)
     
     # Cleanup
