@@ -2,6 +2,8 @@ import requests
 import sys
 import json
 from datetime import datetime, timedelta
+import calendar
+from collections import defaultdict, Counter
 
 class HotelRosterAPITester:
     def __init__(self, base_url="https://rota-maker.preview.emergentagent.com"):
@@ -10,6 +12,22 @@ class HotelRosterAPITester:
         self.tests_run = 0
         self.tests_passed = 0
         self.created_employee_ids = []
+        self.test_results = []
+
+    def log_test(self, name, passed, details=""):
+        """Log test result"""
+        self.tests_run += 1
+        if passed:
+            self.tests_passed += 1
+            print(f"✅ {name}")
+        else:
+            print(f"❌ {name} - {details}")
+        
+        self.test_results.append({
+            "name": name,
+            "passed": passed,
+            "details": details
+        })
 
     def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
         """Run a single API test"""
