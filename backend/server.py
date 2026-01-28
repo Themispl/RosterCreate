@@ -175,13 +175,15 @@ def generate_roster(year: int, month: int, employees: List[dict],
                    vacation_days: Dict[str, List[str]] = {},
                    leave_days: Dict[str, List[str]] = {}) -> Dict[str, Dict[str, str]]:
     """
-    Generate a roster following the NEW constraints:
+    Generate a roster following ALL constraints:
     1. Night shift: 5 days in a row, then 2 days off, then PM shift
     2. Days off must be consecutive (together)
-    3. Most staff on morning/afternoon shifts
-    4. Alternate weeks: one week morning, next week afternoon
-    5. Max 5 night shifts per person per month
-    6. Balance days off - not everyone off same day
+    3. 5 work days, 2 days off per week
+    4. Min 11 hours between shifts (no AM->PM or PM->AM next day without off)
+    5. Use days off to transition between shift types
+    6. Alternate weeks: morning/afternoon
+    7. Max 5 night shifts per person per month
+    8. Balance days off across staff
     """
     num_days = calendar.monthrange(year, month)[1]
     roster = {emp['id']: {} for emp in employees}
@@ -199,190 +201,251 @@ def generate_roster(year: int, month: int, employees: List[dict],
         employee_state[emp['id']] = {
             'consecutive_work': 0,
             'last_shift': None,
-            'days_off_this_week': 0,
-            'current_week_shift': None,  # 'morning' or 'afternoon'
+            'work_days_this_week': 0,
+            'off_days_this_week': 0,
+            'current_shift_type': None,  # 'morning', 'afternoon', 'night'
             'in_night_rotation': False,
-            'night_days_remaining': 0,
-            'needs_off_after_night': 0,
+            'night_days_done': 0,
+            'needs_transition_off': 0,  # Days off needed for shift transition
+            'pending_shift_type': None,  # Shift type to switch to after off days
         }
     
-    # Assign staggered off days to balance - each employee gets different off days
-    off_day_assignments = {}
+    # Assign staggered off days to balance
+    off_day_start = {}
     if flexible:
-        # Distribute off days across the week for each employee
         for i, emp in enumerate(flexible):
-            # Stagger the off days: each employee starts their off days on different weekdays
-            off_day_assignments[emp['id']] = (i * 2) % 7  # Spread across weekdays
+            # Stagger off days: each employee gets different starting days
+            off_day_start[emp['id']] = i % 5  # Spread across Mon-Fri
     
-    # Select employees for night rotation (max 5 nights each)
-    night_rotation_employees = []
-    if len(flexible) >= 2:
-        # Pick employees for night rotation
-        night_rotation_employees = flexible[:max(2, len(flexible) // 3)]
-    
-    # Initialize night rotation schedule
-    night_roster_idx = 0
-    current_night_employee = None
-    night_days_in_current_rotation = 0
+    # Night rotation queue
+    night_queue = [e for e in flexible]
+    night_queue_idx = 0
+    current_night_worker = None
     
     for day in range(1, num_days + 1):
         date_str = f"{year}-{month:02d}-{day:02d}"
         date_obj = datetime(year, month, day)
         weekday = date_obj.weekday()  # 0=Monday, 6=Sunday
-        week_number = (day - 1) // 7  # 0-indexed week number
+        week_number = (day - 1) // 7
         
-        # Track how many people are off this day (for balancing)
-        people_off_today = 0
-        max_off_per_day = max(1, len(flexible) // 4)  # Limit offs per day
+        # Reset weekly counters on Monday
+        if weekday == 0:
+            for emp_id in employee_state:
+                employee_state[emp_id]['work_days_this_week'] = 0
+                employee_state[emp_id]['off_days_this_week'] = 0
+        
+        # Track offs per day for balance
+        offs_today = 0
+        max_offs_per_day = max(1, len(flexible) // 3)
         
         # First, handle vacation and leave days
         for emp in employees:
             emp_id = emp['id']
             if vacation_days.get(emp_id) and date_str in vacation_days[emp_id]:
                 roster[emp_id][date_str] = 'V'
-                continue
-            if leave_days.get(emp_id) and date_str in leave_days[emp_id]:
+            elif leave_days.get(emp_id) and date_str in leave_days[emp_id]:
                 roster[emp_id][date_str] = 'L'
-                continue
         
-        # Assign 9am shift to AGSM and Welcome Agent
+        # Handle AGSM and Welcome Agent (fixed 9am)
         for emp in fixed_9am:
             emp_id = emp['id']
-            if roster[emp_id].get(date_str):  # Already assigned (V or L)
+            if roster[emp_id].get(date_str):
                 continue
             
             state = employee_state[emp_id]
             
-            # Check if needs day off (after 5 consecutive work days)
-            if state['consecutive_work'] >= 5:
-                # Give 2 consecutive days off
-                if state['days_off_this_week'] < 2:
-                    roster[emp_id][date_str] = '0'
-                    state['consecutive_work'] = 0
-                    state['days_off_this_week'] += 1
-                    people_off_today += 1
-                    continue
+            # Check if needs off days (5 work days done or need 2 consecutive offs)
+            needs_off = False
+            if state['work_days_this_week'] >= 5:
+                needs_off = True
+            elif state['consecutive_work'] >= 5:
+                needs_off = True
+            elif state['off_days_this_week'] == 1 and weekday > 0:
+                # If had 1 off day, need another consecutive
+                prev_date = f"{year}-{month:02d}-{day-1:02d}"
+                if roster[emp_id].get(prev_date) == '0':
+                    needs_off = False  # Already had off, can work
+                else:
+                    needs_off = True  # Need consecutive off
             
-            # Reset weekly counter on Monday
-            if weekday == 0:
-                state['days_off_this_week'] = 0
-            
-            roster[emp_id][date_str] = '9'
-            state['consecutive_work'] += 1
-            state['last_shift'] = '9'
+            if needs_off and offs_today < max_offs_per_day:
+                roster[emp_id][date_str] = '0'
+                state['consecutive_work'] = 0
+                state['off_days_this_week'] += 1
+                offs_today += 1
+            else:
+                roster[emp_id][date_str] = '9'
+                state['consecutive_work'] += 1
+                state['work_days_this_week'] += 1
+                state['last_shift'] = '9'
         
-        # Handle night shift rotation
-        # Rule: 5 nights in a row, then 2 days off, then PM shifts
-        if night_rotation_employees:
-            # Check if we need a new night employee
-            if current_night_employee is None or night_days_in_current_rotation >= 5:
-                # Find next available employee for night rotation
-                for _ in range(len(night_rotation_employees)):
-                    candidate = night_rotation_employees[night_roster_idx % len(night_rotation_employees)]
-                    if night_shifts_count[candidate['id']] < 5:  # Max 5 nights per month
-                        # Check if previous night employee needs off days
-                        if current_night_employee and current_night_employee['id'] != candidate['id']:
-                            emp_id = current_night_employee['id']
-                            employee_state[emp_id]['needs_off_after_night'] = 2
-                            employee_state[emp_id]['in_night_rotation'] = False
+        # Handle night shift assignment
+        night_assigned = False
+        if flexible:
+            # Check if current night worker needs rotation
+            if current_night_worker:
+                state = employee_state[current_night_worker['id']]
+                if state['night_days_done'] >= 5:
+                    # Done with 5 nights, needs 2 days off then PM
+                    state['in_night_rotation'] = False
+                    state['needs_transition_off'] = 2
+                    state['pending_shift_type'] = 'afternoon'
+                    current_night_worker = None
+            
+            # Find next night worker if needed
+            if not current_night_worker:
+                for _ in range(len(night_queue)):
+                    candidate = night_queue[night_queue_idx % len(night_queue)]
+                    cand_state = employee_state[candidate['id']]
+                    
+                    # Check if eligible for night shift
+                    if (night_shifts_count[candidate['id']] < 5 and
+                        not cand_state['needs_transition_off'] and
+                        not roster[candidate['id']].get(date_str)):
                         
-                        current_night_employee = candidate
-                        night_days_in_current_rotation = 0
-                        employee_state[candidate['id']]['in_night_rotation'] = True
-                        night_roster_idx += 1
+                        current_night_worker = candidate
+                        cand_state['in_night_rotation'] = True
+                        cand_state['night_days_done'] = 0
+                        night_queue_idx += 1
                         break
-                    night_roster_idx += 1
+                    night_queue_idx += 1
             
             # Assign night shift
-            if current_night_employee:
-                emp_id = current_night_employee['id']
-                if not roster[emp_id].get(date_str) and night_shifts_count[emp_id] < 5:
-                    roster[emp_id][date_str] = '23'
-                    night_shifts_count[emp_id] += 1
-                    night_days_in_current_rotation += 1
-                    employee_state[emp_id]['consecutive_work'] += 1
-                    employee_state[emp_id]['last_shift'] = '23'
+            if current_night_worker:
+                emp_id = current_night_worker['id']
+                if not roster[emp_id].get(date_str):
+                    state = employee_state[emp_id]
+                    
+                    # Check weekly limits
+                    if state['work_days_this_week'] < 5 and state['consecutive_work'] < 5:
+                        roster[emp_id][date_str] = '23'
+                        night_shifts_count[emp_id] += 1
+                        state['night_days_done'] += 1
+                        state['consecutive_work'] += 1
+                        state['work_days_this_week'] += 1
+                        state['last_shift'] = '23'
+                        state['current_shift_type'] = 'night'
+                        night_assigned = True
         
-        # Assign shifts to remaining flexible employees
+        # Assign remaining flexible employees
         for emp in flexible:
             emp_id = emp['id']
             
-            if roster[emp_id].get(date_str):  # Already assigned
+            if roster[emp_id].get(date_str):
                 continue
             
             state = employee_state[emp_id]
             
-            # Handle post-night off days
-            if state['needs_off_after_night'] > 0:
+            # Handle transition off days
+            if state['needs_transition_off'] > 0:
                 roster[emp_id][date_str] = '0'
-                state['needs_off_after_night'] -= 1
+                state['needs_transition_off'] -= 1
                 state['consecutive_work'] = 0
-                people_off_today += 1
+                state['off_days_this_week'] += 1
+                offs_today += 1
+                
+                if state['needs_transition_off'] == 0:
+                    state['current_shift_type'] = state['pending_shift_type']
+                    state['pending_shift_type'] = None
                 continue
             
-            # Reset weekly counter on Monday
-            if weekday == 0:
-                state['days_off_this_week'] = 0
-                # Alternate week shift pattern
-                if state['current_week_shift'] == 'morning':
-                    state['current_week_shift'] = 'afternoon'
-                elif state['current_week_shift'] == 'afternoon':
-                    state['current_week_shift'] = 'morning'
-                else:
-                    # Initialize based on employee index for staggering
-                    emp_idx = flexible.index(emp)
-                    state['current_week_shift'] = 'morning' if (week_number + emp_idx) % 2 == 0 else 'afternoon'
-            
-            # Check if needs day off
+            # Check if needs off days
             needs_off = False
             
-            # After 5 consecutive work days, need 2 days off together
-            if state['consecutive_work'] >= 5:
+            # Weekly limit: 5 work days, need 2 off
+            if state['work_days_this_week'] >= 5:
                 needs_off = True
+            # Consecutive limit
+            elif state['consecutive_work'] >= 5:
+                needs_off = True
+            # Need consecutive off days
+            elif state['off_days_this_week'] == 1:
+                prev_date = f"{year}-{month:02d}-{day-1:02d}" if day > 1 else None
+                if prev_date and roster[emp_id].get(prev_date) == '0':
+                    needs_off = False
+                elif offs_today < max_offs_per_day:
+                    needs_off = True
+            # Staggered off days for balance
+            elif state['off_days_this_week'] == 0 and offs_today < max_offs_per_day:
+                emp_off_day = off_day_start.get(emp_id, 0)
+                if weekday == emp_off_day or weekday == (emp_off_day + 1) % 7:
+                    needs_off = True
             
-            # Check if this is a good day for off (staggered to balance)
-            if not needs_off and state['days_off_this_week'] < 2:
-                # Use staggered off day assignment
-                emp_off_start = off_day_assignments.get(emp_id, 0)
-                if weekday == (emp_off_start % 7) or weekday == ((emp_off_start + 1) % 7):
-                    if people_off_today < max_off_per_day:
-                        needs_off = True
-            
-            if needs_off and people_off_today < max_off_per_day:
+            if needs_off and offs_today < max_offs_per_day:
                 roster[emp_id][date_str] = '0'
                 state['consecutive_work'] = 0
-                state['days_off_this_week'] += 1
-                people_off_today += 1
+                state['off_days_this_week'] += 1
+                offs_today += 1
                 continue
             
-            # Assign morning or afternoon based on weekly rotation
-            if state['current_week_shift'] == 'morning':
-                roster[emp_id][date_str] = '7'
-                state['last_shift'] = '7'
-            else:
-                roster[emp_id][date_str] = '15'
-                state['last_shift'] = '15'
+            # Determine shift type based on week and previous shift
+            target_shift = None
             
+            # Initialize or alternate shift type by week
+            if state['current_shift_type'] is None:
+                emp_idx = flexible.index(emp) if emp in flexible else 0
+                state['current_shift_type'] = 'morning' if (week_number + emp_idx) % 2 == 0 else 'afternoon'
+            
+            # Check 11-hour rest rule (no direct AM<->PM transition)
+            last = state['last_shift']
+            current_type = state['current_shift_type']
+            
+            if last in ['7'] and current_type == 'afternoon':
+                # Can't go from 7am to 15pm next day - need off day first
+                state['needs_transition_off'] = 1
+                state['pending_shift_type'] = 'afternoon'
+                roster[emp_id][date_str] = '0'
+                state['consecutive_work'] = 0
+                state['off_days_this_week'] += 1
+                offs_today += 1
+                continue
+            elif last in ['15'] and current_type == 'morning':
+                # Can't go from 15pm to 7am next day - need off day first
+                state['needs_transition_off'] = 1
+                state['pending_shift_type'] = 'morning'
+                roster[emp_id][date_str] = '0'
+                state['consecutive_work'] = 0
+                state['off_days_this_week'] += 1
+                offs_today += 1
+                continue
+            
+            # Assign shift
+            if current_type == 'morning':
+                target_shift = '7'
+            else:
+                target_shift = '15'
+            
+            roster[emp_id][date_str] = target_shift
+            state['last_shift'] = target_shift
             state['consecutive_work'] += 1
+            state['work_days_this_week'] += 1
+            
+            # Switch shift type at end of week
+            if weekday == 6:  # Sunday
+                if state['current_shift_type'] == 'morning':
+                    state['current_shift_type'] = 'afternoon'
+                else:
+                    state['current_shift_type'] = 'morning'
     
-    # Ensure 2 consecutive days off - fix any isolated off days
+    # Final pass: ensure 2 consecutive off days
     for emp in employees:
         emp_id = emp['id']
         emp_roster = roster[emp_id]
         sorted_dates = sorted(emp_roster.keys())
         
-        for i, date_str in enumerate(sorted_dates):
+        i = 0
+        while i < len(sorted_dates):
+            date_str = sorted_dates[i]
             if emp_roster[date_str] == '0':
-                # Check if isolated (no adjacent off day)
-                prev_off = i > 0 and emp_roster.get(sorted_dates[i-1]) == '0'
-                next_off = i < len(sorted_dates) - 1 and emp_roster.get(sorted_dates[i+1]) == '0'
-                
-                if not prev_off and not next_off:
-                    # Make next day off too if possible
-                    if i < len(sorted_dates) - 1:
-                        next_date = sorted_dates[i + 1]
-                        if emp_roster.get(next_date) not in ['V', 'L']:
-                            emp_roster[next_date] = '0'
+                # Check if next day is also off
+                if i + 1 < len(sorted_dates):
+                    next_date = sorted_dates[i + 1]
+                    if emp_roster.get(next_date) not in ['0', 'V', 'L']:
+                        # Make next day off too for consecutive
+                        emp_roster[next_date] = '0'
+                i += 2  # Skip the pair
+            else:
+                i += 1
     
     return roster
 
