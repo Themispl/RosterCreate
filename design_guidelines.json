@@ -1,0 +1,136 @@
+{
+  "identity": {
+    "name": "StaffFlow",
+    "persona": "E1 - The Anti-AI Designer",
+    "tone": "Soft Utility",
+    "description": "A precision-engineered scheduling tool for hotel management that balances high-density data with visual calm."
+  },
+  "typography": {
+    "primary_font": "Manrope",
+    "secondary_font": "IBM Plex Sans",
+    "mono_font": "JetBrains Mono",
+    "scale": {
+      "h1": "text-4xl font-bold tracking-tight",
+      "h2": "text-2xl font-semibold tracking-tight",
+      "h3": "text-xl font-medium",
+      "body": "text-sm leading-relaxed",
+      "caption": "text-xs text-muted-foreground",
+      "grid_header": "text-xs font-bold uppercase tracking-wider",
+      "grid_cell": "text-sm font-medium font-mono"
+    }
+  },
+  "colors": {
+    "theme": "light",
+    "palette": {
+      "background": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "primary": "#0F172A",
+      "secondary": "#F1F5F9",
+      "border": "#E2E8F0",
+      "text_primary": "#0F172A",
+      "text_secondary": "#64748B"
+    },
+    "shifts": {
+      "day_off": {
+        "bg": "#FEF2F2",
+        "text": "#B91C1C",
+        "border": "#FECACA",
+        "label": "Day Off (0)"
+      },
+      "vacation": {
+        "bg": "#FAF5FF",
+        "text": "#7E22CE",
+        "border": "#E9D5FF",
+        "label": "Vacation (V)"
+      },
+      "morning": {
+        "bg": "#F0FDF4",
+        "text": "#15803D",
+        "border": "#BBF7D0",
+        "label": "Morning (07:00)"
+      },
+      "afternoon": {
+        "bg": "#EFF6FF",
+        "text": "#1D4ED8",
+        "border": "#BFDBFE",
+        "label": "Afternoon (15:00)"
+      },
+      "night": {
+        "bg": "#FFFBEB",
+        "text": "#B45309",
+        "border": "#FDE68A",
+        "label": "Night (23:00)"
+      },
+      "other": {
+        "bg": "#FDF2F8",
+        "text": "#BE185D",
+        "border": "#FBCFE8",
+        "label": "Other"
+      }
+    }
+  },
+  "layout": {
+    "structure": "Sidebar-Main Layout",
+    "sidebar": {
+      "width": "w-72",
+      "bg": "bg-slate-900",
+      "text": "text-slate-50"
+    },
+    "grid": {
+      "type": "CSS Grid",
+      "gap": "gap-px",
+      "bg": "bg-slate-200",
+      "cell_height": "h-12",
+      "sticky_header": "sticky top-0 z-20",
+      "sticky_col": "sticky left-0 z-10"
+    },
+    "spacing": {
+      "container_padding": "p-6 md:p-8",
+      "section_gap": "gap-8"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-slate-900 text-white hover:bg-slate-800 rounded-md shadow-sm transition-all active:scale-95",
+      "secondary": "bg-white text-slate-900 border border-slate-200 hover:bg-slate-50 rounded-md shadow-sm transition-all active:scale-95",
+      "ghost": "hover:bg-slate-100 text-slate-600 hover:text-slate-900 rounded-md transition-colors"
+    },
+    "inputs": {
+      "base": "bg-white border-slate-200 focus:ring-2 focus:ring-slate-900 focus:border-transparent rounded-md shadow-sm"
+    },
+    "cards": {
+      "base": "bg-white border border-slate-200 rounded-lg shadow-sm p-6"
+    },
+    "roster_cell": {
+      "base": "flex items-center justify-center w-full h-full transition-colors cursor-pointer hover:brightness-95",
+      "empty": "bg-white hover:bg-slate-50"
+    }
+  },
+  "visual_enhancers": {
+    "shadows": "shadow-[0_1px_3px_0_rgb(0,0,0,0.1),0_1px_2px_-1px_rgb(0,0,0,0.1)]",
+    "borders": "border border-slate-200",
+    "radius": "rounded-lg",
+    "glass": "backdrop-blur-md bg-white/80 border-b border-white/20"
+  },
+  "image_urls": {
+    "login_bg": "https://images.unsplash.com/photo-1755644046048-989506b73a5c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBob3RlbCUyMGxvYmJ5JTIwaW50ZXJpb3J8ZW58MHx8fHwxNzY5NTc5NjI3fDA&ixlib=rb-4.1.0&q=85"
+  },
+  "instructions_to_main_agent": [
+    "Implement the roster grid using CSS Grid for performance and alignment.",
+    "Use the 'shifts' color palette strictly for the roster cells.",
+    "Ensure the sidebar is collapsible on mobile but fixed on desktop.",
+    "Use 'Manrope' for all headings and 'IBM Plex Sans' for UI text.",
+    "Use 'JetBrains Mono' for dates and time inputs.",
+    "The 'Generate' button should be the primary action in the top bar.",
+    "Implement 'Sonner' for toast notifications (e.g., 'Roster Generated', 'Staff Added').",
+    "Ensure the Excel export preserves the color coding defined in the palette.",
+    "Use the 'login_bg' image for a subtle texture or background if a landing page is created."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not use generic centered layouts.",
+    "Create depth through layered design elements.",
+    "Use 2-3x more spacing than feels comfortable.",
+    "Every interaction needs micro-animations.",
+    "All interactive elements MUST include a data-testid attribute."
+  ]
+}
