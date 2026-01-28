@@ -10,12 +10,12 @@ import {
   Trash2, 
   Upload, 
   RefreshCw,
-  ChevronDown,
   FileSpreadsheet,
   Menu,
   X,
-  Edit2,
-  Check
+  Palette,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,12 +37,13 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-// Shift color configuration matching reference image
-const SHIFT_COLORS = {
+// Default shift color configuration matching reference image
+const DEFAULT_SHIFT_COLORS = {
   "7": { bg: "#FF6666", text: "#000000", label: "Morning (7:00)" },
   "15": { bg: "#009933", text: "#FFFFFF", label: "Afternoon (15:00)" },
   "23": { bg: "#3366CC", text: "#FFFFFF", label: "Night (23:00)" },
@@ -56,7 +57,8 @@ const SHIFT_COLORS = {
   "L": { bg: "#CC6600", text: "#FFFFFF", label: "Leave" },
 };
 
-const POSITIONS = ["GSC", "GSA", "AGSM", "Welcome Agent"];
+const POSITIONS = ["AGSM", "GSC", "GSA", "Welcome Agent"];
+const POSITION_ORDER = { "AGSM": 0, "GSC": 1, "GSA": 2, "Welcome Agent": 3 };
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"
@@ -73,6 +75,16 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [vacationDays, setVacationDays] = useState({});
   const [leaveDays, setLeaveDays] = useState({});
+  
+  // View type state
+  const [viewType, setViewType] = useState("month"); // "month" or "week"
+  const [weekNumber, setWeekNumber] = useState(1);
+  
+  // Custom colors state
+  const [shiftColors, setShiftColors] = useState(DEFAULT_SHIFT_COLORS);
+  const [colorDialogOpen, setColorDialogOpen] = useState(false);
+  const [editingColor, setEditingColor] = useState(null);
+  const [tempColor, setTempColor] = useState({ bg: "", text: "" });
   
   // New employee form
   const [newEmployee, setNewEmployee] = useState({
@@ -92,15 +104,62 @@ function App() {
   // Fetch employees on mount
   useEffect(() => {
     fetchEmployees();
+    fetchColors();
   }, []);
 
   const fetchEmployees = async () => {
     try {
       const response = await axios.get(`${API}/employees`);
-      setEmployees(response.data);
+      // Sort by position order: AGSM → GSC → GSA → Welcome Agent
+      const sorted = response.data.sort((a, b) => {
+        const orderA = POSITION_ORDER[a.position] ?? 99;
+        const orderB = POSITION_ORDER[b.position] ?? 99;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.last_name.localeCompare(b.last_name);
+      });
+      setEmployees(sorted);
     } catch (error) {
       console.error("Failed to fetch employees:", error);
       toast.error("Failed to load employees");
+    }
+  };
+
+  const fetchColors = async () => {
+    try {
+      const response = await axios.get(`${API}/colors`);
+      if (response.data && Object.keys(response.data).length > 0) {
+        // Merge with defaults to ensure all keys exist
+        const merged = { ...DEFAULT_SHIFT_COLORS };
+        Object.keys(response.data).forEach(key => {
+          if (merged[key]) {
+            merged[key] = {
+              ...merged[key],
+              bg: `#${response.data[key].bg.replace('#', '')}`,
+              text: `#${response.data[key].text.replace('#', '')}`
+            };
+          }
+        });
+        setShiftColors(merged);
+      }
+    } catch (error) {
+      console.error("Failed to fetch colors:", error);
+    }
+  };
+
+  const saveColors = async () => {
+    try {
+      const colorData = {};
+      Object.keys(shiftColors).forEach(key => {
+        colorData[key] = {
+          bg: shiftColors[key].bg.replace('#', ''),
+          text: shiftColors[key].text.replace('#', '')
+        };
+      });
+      await axios.post(`${API}/colors`, colorData);
+      toast.success("Colors saved successfully");
+    } catch (error) {
+      console.error("Failed to save colors:", error);
+      toast.error("Failed to save colors");
     }
   };
 
@@ -112,7 +171,13 @@ function App() {
     
     try {
       const response = await axios.post(`${API}/employees`, newEmployee);
-      setEmployees([...employees, response.data]);
+      const updatedEmployees = [...employees, response.data].sort((a, b) => {
+        const orderA = POSITION_ORDER[a.position] ?? 99;
+        const orderB = POSITION_ORDER[b.position] ?? 99;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.last_name.localeCompare(b.last_name);
+      });
+      setEmployees(updatedEmployees);
       setNewEmployee({ last_name: "", first_name: "", position: "GSC", group: "" });
       setAddEmployeeOpen(false);
       toast.success("Employee added successfully");
@@ -141,7 +206,13 @@ function App() {
       const response = await axios.post(`${API}/employees/import-csv`, formData, {
         headers: { "Content-Type": "multipart/form-data" }
       });
-      setEmployees([...employees, ...response.data.employees]);
+      const updatedEmployees = [...employees, ...response.data.employees].sort((a, b) => {
+        const orderA = POSITION_ORDER[a.position] ?? 99;
+        const orderB = POSITION_ORDER[b.position] ?? 99;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.last_name.localeCompare(b.last_name);
+      });
+      setEmployees(updatedEmployees);
       toast.success(`Imported ${response.data.imported} employees`);
     } catch (error) {
       console.error("Failed to import CSV:", error);
@@ -179,12 +250,23 @@ function App() {
     setIsGenerating(true);
     
     try {
+      const customColors = {};
+      Object.keys(shiftColors).forEach(key => {
+        customColors[key] = {
+          bg: shiftColors[key].bg.replace('#', ''),
+          text: shiftColors[key].text.replace('#', '')
+        };
+      });
+      
       const response = await axios.post(`${API}/roster/generate`, {
         year: selectedYear,
         month: selectedMonth,
         employees: employees.map(e => e.id),
         vacation_days: vacationDays,
-        leave_days: leaveDays
+        leave_days: leaveDays,
+        custom_colors: customColors,
+        view_type: viewType,
+        week_number: viewType === "week" ? weekNumber : null
       });
       
       setRoster(response.data.roster);
@@ -207,12 +289,21 @@ function App() {
     setIsExporting(true);
     
     try {
+      const customColors = {};
+      Object.keys(shiftColors).forEach(key => {
+        customColors[key] = {
+          bg: shiftColors[key].bg.replace('#', ''),
+          text: shiftColors[key].text.replace('#', '')
+        };
+      });
+      
       const response = await axios.post(`${API}/roster/export-excel`, {
         year: selectedYear,
         month: selectedMonth,
         employees: employees.map(e => e.id),
         vacation_days: vacationDays,
-        leave_days: leaveDays
+        leave_days: leaveDays,
+        custom_colors: customColors
       }, {
         responseType: "blob"
       });
@@ -242,7 +333,6 @@ function App() {
   const updateCellValue = (value) => {
     if (!editCell) return;
     
-    // Update local roster state
     setRoster(prev => ({
       ...prev,
       [editCell.employeeId]: {
@@ -251,7 +341,6 @@ function App() {
       }
     }));
     
-    // Update vacation/leave tracking
     if (value === "V") {
       setVacationDays(prev => ({
         ...prev,
@@ -269,13 +358,43 @@ function App() {
   };
 
   const getShiftStyle = (shift) => {
-    if (!shift || !SHIFT_COLORS[shift]) {
+    if (!shift || !shiftColors[shift]) {
       return { backgroundColor: "#FFFFFF", color: "#64748B" };
     }
     return { 
-      backgroundColor: SHIFT_COLORS[shift].bg, 
-      color: SHIFT_COLORS[shift].text 
+      backgroundColor: shiftColors[shift].bg, 
+      color: shiftColors[shift].text 
     };
+  };
+
+  const openColorEditor = (shiftKey) => {
+    setEditingColor(shiftKey);
+    setTempColor({
+      bg: shiftColors[shiftKey].bg,
+      text: shiftColors[shiftKey].text
+    });
+    setColorDialogOpen(true);
+  };
+
+  const saveColorEdit = () => {
+    if (editingColor) {
+      setShiftColors(prev => ({
+        ...prev,
+        [editingColor]: {
+          ...prev[editingColor],
+          bg: tempColor.bg,
+          text: tempColor.text
+        }
+      }));
+      setColorDialogOpen(false);
+      setEditingColor(null);
+      saveColors();
+    }
+  };
+
+  const getWeeksInMonth = () => {
+    const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
+    return Math.ceil(daysInMonth / 7);
   };
 
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() + i - 2);
@@ -344,6 +463,55 @@ function App() {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          
+          {/* View Type Toggle */}
+          <div className="form-group">
+            <label className="form-label">View Type</label>
+            <Tabs value={viewType} onValueChange={setViewType} className="w-full">
+              <TabsList className="w-full bg-slate-800">
+                <TabsTrigger 
+                  value="month" 
+                  className="flex-1 data-[state=active]:bg-blue-600"
+                  data-testid="view-month-tab"
+                >
+                  Month
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="week" 
+                  className="flex-1 data-[state=active]:bg-blue-600"
+                  data-testid="view-week-tab"
+                >
+                  Week
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            
+            {viewType === "week" && (
+              <div className="flex items-center justify-between mt-3 bg-slate-800 rounded-lg p-2">
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => setWeekNumber(Math.max(1, weekNumber - 1))}
+                  disabled={weekNumber <= 1}
+                  className="text-white hover:bg-slate-700"
+                  data-testid="prev-week-btn"
+                >
+                  <ChevronLeft size={18} />
+                </Button>
+                <span className="text-white font-medium">Week {weekNumber}</span>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => setWeekNumber(Math.min(getWeeksInMonth(), weekNumber + 1))}
+                  disabled={weekNumber >= getWeeksInMonth()}
+                  className="text-white hover:bg-slate-700"
+                  data-testid="next-week-btn"
+                >
+                  <ChevronRight size={18} />
+                </Button>
+              </div>
+            )}
           </div>
           
           {/* CSV Upload */}
@@ -490,12 +658,20 @@ function App() {
             </div>
           </div>
           
-          {/* Legend */}
+          {/* Color Legend with Edit */}
           <div className="form-group mt-8">
-            <label className="form-label">Color Legend</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="form-label mb-0">Color Legend</label>
+              <span className="text-xs text-slate-500">Click to edit</span>
+            </div>
             <div className="grid grid-cols-2 gap-2">
-              {Object.entries(SHIFT_COLORS).map(([key, value]) => (
-                <div key={key} className="legend-item">
+              {Object.entries(shiftColors).map(([key, value]) => (
+                <div 
+                  key={key} 
+                  className="legend-item cursor-pointer hover:bg-slate-800 p-1 rounded transition-colors"
+                  onClick={() => openColorEditor(key)}
+                  data-testid={`legend-color-${key}`}
+                >
                   <div 
                     className="legend-color"
                     style={{ backgroundColor: value.bg, color: value.text }}
@@ -525,6 +701,7 @@ function App() {
             <div>
               <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "'Manrope', sans-serif" }}>
                 {MONTHS[selectedMonth - 1]} {selectedYear} Roster
+                {viewType === "week" && ` - Week ${weekNumber}`}
               </h2>
               <p className="text-sm text-slate-500">
                 {employees.length} employees • {daysInfo.length} days
@@ -579,7 +756,7 @@ function App() {
               <table className="roster-table" data-testid="roster-table">
                 <thead>
                   <tr>
-                    <th className="sticky-col sticky-header employee-cell" style={{ minWidth: '200px', zIndex: 30 }}>
+                    <th className="sticky-col sticky-header employee-cell" style={{ minWidth: '280px', zIndex: 30 }}>
                       Employee
                     </th>
                     {daysInfo.map((day) => (
@@ -596,7 +773,7 @@ function App() {
                 <tbody>
                   {employees.map((emp) => (
                     <tr key={emp.id} data-testid={`roster-row-${emp.id}`}>
-                      <td className="sticky-col employee-cell">
+                      <td className="sticky-col employee-cell" style={{ minWidth: '280px' }}>
                         <div className="employee-name">{emp.last_name} {emp.first_name}</div>
                         <div className="employee-position">{emp.position}</div>
                       </td>
@@ -636,7 +813,7 @@ function App() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-3 gap-2 py-4">
-            {Object.entries(SHIFT_COLORS).map(([key, value]) => (
+            {Object.entries(shiftColors).map(([key, value]) => (
               <Button
                 key={key}
                 variant="outline"
@@ -657,6 +834,76 @@ function App() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditCell(null)}>
               Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Color Edit Dialog */}
+      <Dialog open={colorDialogOpen} onOpenChange={setColorDialogOpen}>
+        <DialogContent data-testid="color-edit-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              <Palette className="inline mr-2" size={20} />
+              Edit Color for "{editingColor}"
+            </DialogTitle>
+            <DialogDescription>
+              Customize the background and text color for this shift
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Background Color</Label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="color"
+                  value={tempColor.bg}
+                  onChange={(e) => setTempColor({...tempColor, bg: e.target.value})}
+                  className="w-12 h-10 rounded border cursor-pointer"
+                  data-testid="color-picker-bg"
+                />
+                <Input
+                  value={tempColor.bg}
+                  onChange={(e) => setTempColor({...tempColor, bg: e.target.value})}
+                  placeholder="#FF6666"
+                  className="flex-1"
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label>Text Color</Label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="color"
+                  value={tempColor.text}
+                  onChange={(e) => setTempColor({...tempColor, text: e.target.value})}
+                  className="w-12 h-10 rounded border cursor-pointer"
+                  data-testid="color-picker-text"
+                />
+                <Input
+                  value={tempColor.text}
+                  onChange={(e) => setTempColor({...tempColor, text: e.target.value})}
+                  placeholder="#000000"
+                  className="flex-1"
+                />
+              </div>
+            </div>
+            <div className="mt-2">
+              <Label>Preview</Label>
+              <div 
+                className="mt-2 p-4 rounded-lg text-center font-bold text-xl"
+                style={{ backgroundColor: tempColor.bg, color: tempColor.text }}
+              >
+                {editingColor}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setColorDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={saveColorEdit} data-testid="save-color-btn">
+              Save Color
             </Button>
           </DialogFooter>
         </DialogContent>
