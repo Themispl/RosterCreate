@@ -323,6 +323,12 @@ class HotelRosterAPITester:
             print(f"❌ Failed - {violations} employees have isolated off days")
         
         return violations == 0
+
+    def cleanup(self):
+        """Clean up created employees"""
+        print(f"\n🧹 Cleaning up {len(self.created_employee_ids)} created employees...")
+        for emp_id in self.created_employee_ids.copy():
+            self.test_delete_employee(emp_id)
         """Clean up created employees"""
         print(f"\n🧹 Cleaning up {len(self.created_employee_ids)} created employees...")
         for emp_id in self.created_employee_ids.copy():
