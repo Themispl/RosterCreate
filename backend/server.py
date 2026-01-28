@@ -16,6 +16,7 @@ import csv
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import random
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -29,8 +30,8 @@ db = client[os.environ['DB_NAME']]
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
-# Color configuration matching the reference image
-SHIFT_COLORS = {
+# Default color configuration matching the reference image
+DEFAULT_SHIFT_COLORS = {
     "7": {"bg": "FF6666", "text": "000000"},      # Morning - Red
     "15": {"bg": "009933", "text": "FFFFFF"},     # Afternoon - Green
     "23": {"bg": "3366CC", "text": "FFFFFF"},     # Night - Blue
@@ -44,6 +45,9 @@ SHIFT_COLORS = {
     "L": {"bg": "CC6600", "text": "FFFFFF"},      # Leave - Orange
 }
 
+# Position sort order
+POSITION_ORDER = {"AGSM": 0, "GSC": 1, "GSA": 2, "Welcome Agent": 3}
+
 # Models
 class Employee(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -51,7 +55,7 @@ class Employee(BaseModel):
     last_name: str
     first_name: str
     position: str  # GSC, GSA, AGSM, Welcome Agent
-    group: Optional[str] = None  # e.g., "NAFSIKA", "WELCOME AGENTS"
+    group: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class EmployeeCreate(BaseModel):
@@ -66,23 +70,27 @@ class EmployeeUpdate(BaseModel):
     position: Optional[str] = None
     group: Optional[str] = None
 
-class RosterEntry(BaseModel):
-    employee_id: str
-    date: str  # YYYY-MM-DD
-    shift: str  # "7", "15", "23", "9", "0", "V", "L", etc.
+class ColorConfig(BaseModel):
+    bg: str
+    text: str
 
 class RosterRequest(BaseModel):
     year: int
     month: int
-    employees: List[str]  # List of employee IDs
-    vacation_days: Dict[str, List[str]] = {}  # employee_id -> list of dates
-    leave_days: Dict[str, List[str]] = {}  # employee_id -> list of dates
+    employees: List[str]
+    vacation_days: Dict[str, List[str]] = {}
+    leave_days: Dict[str, List[str]] = {}
+    custom_colors: Dict[str, ColorConfig] = {}
+    view_type: str = "month"  # "month" or "week"
+    week_number: Optional[int] = None  # 1-5 for week view
 
 class RosterResponse(BaseModel):
     year: int
     month: int
-    roster: Dict[str, Dict[str, str]]  # employee_id -> {date: shift}
-    days_info: List[Dict[str, Any]]  # [{day: 1, weekday: "MON", date: "2025-01-01"}, ...]
+    roster: Dict[str, Dict[str, str]]
+    days_info: List[Dict[str, Any]]
+    view_type: str
+    week_number: Optional[int] = None
 
 # Employee endpoints
 @api_router.post("/employees", response_model=Employee)
@@ -99,6 +107,9 @@ async def get_employees():
     for emp in employees:
         if isinstance(emp.get('created_at'), str):
             emp['created_at'] = datetime.fromisoformat(emp['created_at'])
+    
+    # Sort by position order: AGSM → GSC → GSA → Welcome Agent
+    employees.sort(key=lambda x: (POSITION_ORDER.get(x['position'], 99), x['last_name']))
     return employees
 
 @api_router.put("/employees/{employee_id}", response_model=Employee)
@@ -159,47 +170,70 @@ async def import_csv(file: UploadFile = File(...)):
     
     return {"imported": len(created), "employees": created}
 
-# Roster generation algorithm
+
 def generate_roster(year: int, month: int, employees: List[dict], 
                    vacation_days: Dict[str, List[str]] = {},
                    leave_days: Dict[str, List[str]] = {}) -> Dict[str, Dict[str, str]]:
     """
-    Generate a roster following the constraints:
-    - 24/7 coverage (at least 1 person on night shift)
-    - 8-hour shifts
-    - 5 work days, 2 days off per week
-    - Min 11 hours rest between shifts
-    - No more than 5 consecutive work days
-    - Quick turnaround rule (no afternoon -> morning next day)
-    - AGSM and Welcome Agent always 9am shift
+    Generate a roster following the NEW constraints:
+    1. Night shift: 5 days in a row, then 2 days off, then PM shift
+    2. Days off must be consecutive (together)
+    3. Most staff on morning/afternoon shifts
+    4. Alternate weeks: one week morning, next week afternoon
+    5. Max 5 night shifts per person per month
+    6. Balance days off - not everyone off same day
     """
     num_days = calendar.monthrange(year, month)[1]
     roster = {emp['id']: {} for emp in employees}
-    
-    # Track consecutive work days and last shift for each employee
-    consecutive_days = {emp['id']: 0 for emp in employees}
-    last_shift = {emp['id']: None for emp in employees}
-    days_worked_this_week = {emp['id']: 0 for emp in employees}
     
     # Separate employees by position
     fixed_9am = [e for e in employees if e['position'] in ['AGSM', 'Welcome Agent']]
     flexible = [e for e in employees if e['position'] not in ['AGSM', 'Welcome Agent']]
     
+    # Track night shifts per employee
+    night_shifts_count = {emp['id']: 0 for emp in employees}
+    
+    # Track employee states
+    employee_state = {}
+    for emp in employees:
+        employee_state[emp['id']] = {
+            'consecutive_work': 0,
+            'last_shift': None,
+            'days_off_this_week': 0,
+            'current_week_shift': None,  # 'morning' or 'afternoon'
+            'in_night_rotation': False,
+            'night_days_remaining': 0,
+            'needs_off_after_night': 0,
+        }
+    
+    # Assign staggered off days to balance - each employee gets different off days
+    off_day_assignments = {}
+    if flexible:
+        # Distribute off days across the week for each employee
+        for i, emp in enumerate(flexible):
+            # Stagger the off days: each employee starts their off days on different weekdays
+            off_day_assignments[emp['id']] = (i * 2) % 7  # Spread across weekdays
+    
+    # Select employees for night rotation (max 5 nights each)
+    night_rotation_employees = []
+    if len(flexible) >= 2:
+        # Pick employees for night rotation
+        night_rotation_employees = flexible[:max(2, len(flexible) // 3)]
+    
+    # Initialize night rotation schedule
+    night_roster_idx = 0
+    current_night_employee = None
+    night_days_in_current_rotation = 0
+    
     for day in range(1, num_days + 1):
         date_str = f"{year}-{month:02d}-{day:02d}"
         date_obj = datetime(year, month, day)
         weekday = date_obj.weekday()  # 0=Monday, 6=Sunday
+        week_number = (day - 1) // 7  # 0-indexed week number
         
-        # Reset weekly counter on Monday
-        if weekday == 0:
-            for emp_id in days_worked_this_week:
-                days_worked_this_week[emp_id] = 0
-        
-        # Track shift assignments for this day
-        morning_assigned = []
-        afternoon_assigned = []
-        night_assigned = []
-        nine_am_assigned = []
+        # Track how many people are off this day (for balancing)
+        people_off_today = 0
+        max_off_per_day = max(1, len(flexible) // 4)  # Limit offs per day
         
         # First, handle vacation and leave days
         for emp in employees:
@@ -217,106 +251,141 @@ def generate_roster(year: int, month: int, employees: List[dict],
             if roster[emp_id].get(date_str):  # Already assigned (V or L)
                 continue
             
-            # Check if employee needs a day off
-            if consecutive_days[emp_id] >= 5 or days_worked_this_week[emp_id] >= 5:
-                roster[emp_id][date_str] = '0'
-                consecutive_days[emp_id] = 0
-            else:
-                roster[emp_id][date_str] = '9'
-                nine_am_assigned.append(emp_id)
-                consecutive_days[emp_id] += 1
-                days_worked_this_week[emp_id] += 1
-                last_shift[emp_id] = '9'
+            state = employee_state[emp_id]
+            
+            # Check if needs day off (after 5 consecutive work days)
+            if state['consecutive_work'] >= 5:
+                # Give 2 consecutive days off
+                if state['days_off_this_week'] < 2:
+                    roster[emp_id][date_str] = '0'
+                    state['consecutive_work'] = 0
+                    state['days_off_this_week'] += 1
+                    people_off_today += 1
+                    continue
+            
+            # Reset weekly counter on Monday
+            if weekday == 0:
+                state['days_off_this_week'] = 0
+            
+            roster[emp_id][date_str] = '9'
+            state['consecutive_work'] += 1
+            state['last_shift'] = '9'
         
-        # Assign shifts to flexible employees
-        available_for_morning = []
-        available_for_afternoon = []
-        available_for_night = []
-        needs_day_off = []
+        # Handle night shift rotation
+        # Rule: 5 nights in a row, then 2 days off, then PM shifts
+        if night_rotation_employees:
+            # Check if we need a new night employee
+            if current_night_employee is None or night_days_in_current_rotation >= 5:
+                # Find next available employee for night rotation
+                for _ in range(len(night_rotation_employees)):
+                    candidate = night_rotation_employees[night_roster_idx % len(night_rotation_employees)]
+                    if night_shifts_count[candidate['id']] < 5:  # Max 5 nights per month
+                        # Check if previous night employee needs off days
+                        if current_night_employee and current_night_employee['id'] != candidate['id']:
+                            emp_id = current_night_employee['id']
+                            employee_state[emp_id]['needs_off_after_night'] = 2
+                            employee_state[emp_id]['in_night_rotation'] = False
+                        
+                        current_night_employee = candidate
+                        night_days_in_current_rotation = 0
+                        employee_state[candidate['id']]['in_night_rotation'] = True
+                        night_roster_idx += 1
+                        break
+                    night_roster_idx += 1
+            
+            # Assign night shift
+            if current_night_employee:
+                emp_id = current_night_employee['id']
+                if not roster[emp_id].get(date_str) and night_shifts_count[emp_id] < 5:
+                    roster[emp_id][date_str] = '23'
+                    night_shifts_count[emp_id] += 1
+                    night_days_in_current_rotation += 1
+                    employee_state[emp_id]['consecutive_work'] += 1
+                    employee_state[emp_id]['last_shift'] = '23'
         
+        # Assign shifts to remaining flexible employees
         for emp in flexible:
             emp_id = emp['id']
-            if roster[emp_id].get(date_str):  # Already assigned (V or L)
+            
+            if roster[emp_id].get(date_str):  # Already assigned
                 continue
             
-            # Check if employee needs a day off
-            if consecutive_days[emp_id] >= 5 or days_worked_this_week[emp_id] >= 5:
-                needs_day_off.append(emp_id)
+            state = employee_state[emp_id]
+            
+            # Handle post-night off days
+            if state['needs_off_after_night'] > 0:
+                roster[emp_id][date_str] = '0'
+                state['needs_off_after_night'] -= 1
+                state['consecutive_work'] = 0
+                people_off_today += 1
                 continue
             
-            # Check quick turnaround rule
-            prev_shift = last_shift[emp_id]
-            
-            # Can't do morning after afternoon (15->7 violates 11h rest)
-            if prev_shift != '15':
-                available_for_morning.append(emp_id)
-            
-            # Afternoon is always available (except after night which rarely happens)
-            if prev_shift != '23':
-                available_for_afternoon.append(emp_id)
-            
-            # Night shift - prefer rotating among staff
-            if prev_shift not in ['23']:  # Don't do consecutive nights
-                available_for_night.append(emp_id)
-        
-        # Assign day offs
-        for emp_id in needs_day_off:
-            roster[emp_id][date_str] = '0'
-            consecutive_days[emp_id] = 0
-        
-        # Ensure at least one night shift
-        if available_for_night:
-            night_emp = available_for_night.pop(0)
-            roster[night_emp][date_str] = '23'
-            night_assigned.append(night_emp)
-            consecutive_days[night_emp] += 1
-            days_worked_this_week[night_emp] += 1
-            last_shift[night_emp] = '23'
-            
-            # Remove from other available lists
-            if night_emp in available_for_morning:
-                available_for_morning.remove(night_emp)
-            if night_emp in available_for_afternoon:
-                available_for_afternoon.remove(night_emp)
-        
-        # Distribute remaining employees between morning and afternoon
-        remaining = set(available_for_morning + available_for_afternoon)
-        remaining = remaining - set(night_assigned)
-        
-        # Balance morning and afternoon shifts
-        remaining_list = list(remaining)
-        mid = len(remaining_list) // 2
-        
-        for i, emp_id in enumerate(remaining_list):
-            if i < mid:
-                # Assign morning if available
-                if emp_id in available_for_morning:
-                    roster[emp_id][date_str] = '7'
-                    last_shift[emp_id] = '7'
-                elif emp_id in available_for_afternoon:
-                    roster[emp_id][date_str] = '15'
-                    last_shift[emp_id] = '15'
+            # Reset weekly counter on Monday
+            if weekday == 0:
+                state['days_off_this_week'] = 0
+                # Alternate week shift pattern
+                if state['current_week_shift'] == 'morning':
+                    state['current_week_shift'] = 'afternoon'
+                elif state['current_week_shift'] == 'afternoon':
+                    state['current_week_shift'] = 'morning'
                 else:
-                    roster[emp_id][date_str] = '0'
-                    consecutive_days[emp_id] = 0
-                    continue
+                    # Initialize based on employee index for staggering
+                    emp_idx = flexible.index(emp)
+                    state['current_week_shift'] = 'morning' if (week_number + emp_idx) % 2 == 0 else 'afternoon'
+            
+            # Check if needs day off
+            needs_off = False
+            
+            # After 5 consecutive work days, need 2 days off together
+            if state['consecutive_work'] >= 5:
+                needs_off = True
+            
+            # Check if this is a good day for off (staggered to balance)
+            if not needs_off and state['days_off_this_week'] < 2:
+                # Use staggered off day assignment
+                emp_off_start = off_day_assignments.get(emp_id, 0)
+                if weekday == (emp_off_start % 7) or weekday == ((emp_off_start + 1) % 7):
+                    if people_off_today < max_off_per_day:
+                        needs_off = True
+            
+            if needs_off and people_off_today < max_off_per_day:
+                roster[emp_id][date_str] = '0'
+                state['consecutive_work'] = 0
+                state['days_off_this_week'] += 1
+                people_off_today += 1
+                continue
+            
+            # Assign morning or afternoon based on weekly rotation
+            if state['current_week_shift'] == 'morning':
+                roster[emp_id][date_str] = '7'
+                state['last_shift'] = '7'
             else:
-                # Assign afternoon if available
-                if emp_id in available_for_afternoon:
-                    roster[emp_id][date_str] = '15'
-                    last_shift[emp_id] = '15'
-                elif emp_id in available_for_morning:
-                    roster[emp_id][date_str] = '7'
-                    last_shift[emp_id] = '7'
-                else:
-                    roster[emp_id][date_str] = '0'
-                    consecutive_days[emp_id] = 0
-                    continue
+                roster[emp_id][date_str] = '15'
+                state['last_shift'] = '15'
             
-            consecutive_days[emp_id] += 1
-            days_worked_this_week[emp_id] += 1
+            state['consecutive_work'] += 1
+    
+    # Ensure 2 consecutive days off - fix any isolated off days
+    for emp in employees:
+        emp_id = emp['id']
+        emp_roster = roster[emp_id]
+        sorted_dates = sorted(emp_roster.keys())
+        
+        for i, date_str in enumerate(sorted_dates):
+            if emp_roster[date_str] == '0':
+                # Check if isolated (no adjacent off day)
+                prev_off = i > 0 and emp_roster.get(sorted_dates[i-1]) == '0'
+                next_off = i < len(sorted_dates) - 1 and emp_roster.get(sorted_dates[i+1]) == '0'
+                
+                if not prev_off and not next_off:
+                    # Make next day off too if possible
+                    if i < len(sorted_dates) - 1:
+                        next_date = sorted_dates[i + 1]
+                        if emp_roster.get(next_date) not in ['V', 'L']:
+                            emp_roster[next_date] = '0'
     
     return roster
+
 
 @api_router.post("/roster/generate", response_model=RosterResponse)
 async def generate_roster_endpoint(request: RosterRequest):
@@ -328,6 +397,9 @@ async def generate_roster_endpoint(request: RosterRequest):
     
     if not employees:
         raise HTTPException(status_code=400, detail="No employees found")
+    
+    # Sort employees by position order
+    employees.sort(key=lambda x: (POSITION_ORDER.get(x['position'], 99), x['last_name']))
     
     roster = generate_roster(
         request.year, 
@@ -341,7 +413,16 @@ async def generate_roster_endpoint(request: RosterRequest):
     num_days = calendar.monthrange(request.year, request.month)[1]
     weekday_names = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
     days_info = []
-    for day in range(1, num_days + 1):
+    
+    # Filter days based on view type
+    if request.view_type == "week" and request.week_number:
+        start_day = (request.week_number - 1) * 7 + 1
+        end_day = min(start_day + 6, num_days)
+        day_range = range(start_day, end_day + 1)
+    else:
+        day_range = range(1, num_days + 1)
+    
+    for day in day_range:
         date_obj = datetime(request.year, request.month, day)
         days_info.append({
             "day": day,
@@ -353,19 +434,11 @@ async def generate_roster_endpoint(request: RosterRequest):
         year=request.year,
         month=request.month,
         roster=roster,
-        days_info=days_info
+        days_info=days_info,
+        view_type=request.view_type,
+        week_number=request.week_number
     )
 
-@api_router.post("/roster/update-cell")
-async def update_roster_cell(employee_id: str, date: str, shift: str):
-    """Update a single cell in the roster (for manual vacation/request marking)"""
-    # Store in database
-    await db.roster_entries.update_one(
-        {"employee_id": employee_id, "date": date},
-        {"$set": {"shift": shift}},
-        upsert=True
-    )
-    return {"success": True}
 
 @api_router.post("/roster/export-excel")
 async def export_excel(request: RosterRequest):
@@ -379,6 +452,9 @@ async def export_excel(request: RosterRequest):
     if not employees:
         raise HTTPException(status_code=400, detail="No employees found")
     
+    # Sort employees by position order
+    employees.sort(key=lambda x: (POSITION_ORDER.get(x['position'], 99), x['last_name']))
+    
     # Generate roster
     roster = generate_roster(
         request.year,
@@ -387,6 +463,11 @@ async def export_excel(request: RosterRequest):
         request.vacation_days,
         request.leave_days
     )
+    
+    # Merge custom colors with defaults
+    shift_colors = DEFAULT_SHIFT_COLORS.copy()
+    for key, color in request.custom_colors.items():
+        shift_colors[key] = {"bg": color.bg.replace('#', ''), "text": color.text.replace('#', '')}
     
     # Create Excel workbook
     wb = Workbook()
@@ -397,7 +478,6 @@ async def export_excel(request: RosterRequest):
     weekday_names = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
     
     # Header styling
-    header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
     header_font = Font(bold=True, size=10)
     thin_border = Border(
         left=Side(style='thin'),
@@ -427,10 +507,10 @@ async def export_excel(request: RosterRequest):
         ws.cell(row=2, column=col).alignment = Alignment(horizontal='center')
         ws.cell(row=2, column=col).border = thin_border
     
-    # Set column widths
-    ws.column_dimensions['A'].width = 15
-    ws.column_dimensions['B'].width = 15
-    ws.column_dimensions['C'].width = 10
+    # Set column widths - wider for names
+    ws.column_dimensions['A'].width = 18
+    ws.column_dimensions['B'].width = 18
+    ws.column_dimensions['C'].width = 14
     for day in range(1, num_days + 1):
         ws.column_dimensions[get_column_letter(day + 3)].width = 5
     
@@ -438,10 +518,7 @@ async def export_excel(request: RosterRequest):
     row = 3
     current_group = None
     
-    # Sort employees by group
-    sorted_employees = sorted(employees, key=lambda x: (x.get('group') or '', x['last_name']))
-    
-    for emp in sorted_employees:
+    for emp in employees:
         # Add group header if group changes
         if emp.get('group') and emp.get('group') != current_group:
             current_group = emp.get('group')
@@ -468,8 +545,8 @@ async def export_excel(request: RosterRequest):
             cell.border = thin_border
             
             # Apply color based on shift
-            if shift in SHIFT_COLORS:
-                color = SHIFT_COLORS[shift]
+            if shift in shift_colors:
+                color = shift_colors[shift]
                 cell.fill = PatternFill(start_color=color["bg"], end_color=color["bg"], fill_type="solid")
                 cell.font = Font(color=color["text"], bold=True)
         
@@ -488,9 +565,31 @@ async def export_excel(request: RosterRequest):
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
+
+@api_router.get("/colors")
+async def get_colors():
+    """Get current color configuration"""
+    colors = await db.color_config.find_one({"type": "shift_colors"}, {"_id": 0})
+    if colors:
+        return colors.get("colors", DEFAULT_SHIFT_COLORS)
+    return DEFAULT_SHIFT_COLORS
+
+@api_router.post("/colors")
+async def save_colors(colors: Dict[str, ColorConfig]):
+    """Save custom color configuration"""
+    color_dict = {k: v.model_dump() for k, v in colors.items()}
+    await db.color_config.update_one(
+        {"type": "shift_colors"},
+        {"$set": {"colors": color_dict}},
+        upsert=True
+    )
+    return {"success": True, "colors": color_dict}
+
+
 @api_router.get("/")
 async def root():
     return {"message": "StaffFlow API - Hotel Roster Generator"}
+
 
 # Include router
 app.include_router(api_router)
