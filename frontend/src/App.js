@@ -756,7 +756,7 @@ function App() {
               <table className="roster-table" data-testid="roster-table">
                 <thead>
                   <tr>
-                    <th className="sticky-col sticky-header employee-cell" style={{ minWidth: '280px', zIndex: 30 }}>
+                    <th className="sticky-col sticky-header employee-cell" style={{ minWidth: '140px', maxWidth: '160px', zIndex: 30 }}>
                       Employee
                     </th>
                     {daysInfo.map((day) => (
