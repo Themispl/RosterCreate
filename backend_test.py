@@ -342,11 +342,241 @@ class HotelRosterAPITester:
         
         return violations == 0
 
+    def test_exactly_two_consecutive_off_days_per_week(self, roster_data):
+        """Test Rule: Each employee has exactly 2 consecutive days off per week"""
+        print(f"\n🔍 Testing Exactly 2 Consecutive Off Days Per Week...")
+        
+        roster = roster_data.get('roster', {})
+        year = roster_data.get('year')
+        month = roster_data.get('month')
+        num_days = calendar.monthrange(year, month)[1]
+        
+        violations = []
+        
+        for emp_id, schedule in roster.items():
+            # Group days by week
+            weeks = defaultdict(list)
+            for day in range(1, num_days + 1):
+                date_str = f"{year}-{month:02d}-{day:02d}"
+                date_obj = datetime(year, month, day)
+                week_num = (day - 1) // 7
+                shift = schedule.get(date_str, '')
+                weeks[week_num].append((day, shift))
+            
+            # Check each week
+            for week_num, week_days in weeks.items():
+                if len(week_days) < 7:  # Skip partial weeks
+                    continue
+                    
+                off_days = [day for day, shift in week_days if shift == '0']
+                
+                # Should have exactly 2 off days
+                if len(off_days) != 2:
+                    violations.append(f"Employee {emp_id} Week {week_num}: {len(off_days)} off days (expected 2)")
+                    continue
+                
+                # Check if off days are consecutive
+                if abs(off_days[1] - off_days[0]) != 1:
+                    violations.append(f"Employee {emp_id} Week {week_num}: Off days {off_days} not consecutive")
+        
+        self.tests_run += 1
+        if not violations:
+            self.tests_passed += 1
+            print(f"✅ Passed - All employees have exactly 2 consecutive off days per week")
+        else:
+            print(f"❌ Failed - {len(violations)} violations found:")
+            for violation in violations[:3]:  # Show first 3 violations
+                print(f"   • {violation}")
+        
+        return len(violations) == 0
+
+    def test_balanced_off_days(self, roster_data):
+        """Test Rule: Days off are balanced - not everyone off same day"""
+        print(f"\n🔍 Testing Balanced Off Days...")
+        
+        roster = roster_data.get('roster', {})
+        year = roster_data.get('year')
+        month = roster_data.get('month')
+        num_days = calendar.monthrange(year, month)[1]
+        
+        # Count off days per date
+        off_count_per_day = defaultdict(int)
+        total_employees = len(roster)
+        
+        for day in range(1, num_days + 1):
+            date_str = f"{year}-{month:02d}-{day:02d}"
+            for emp_id, schedule in roster.items():
+                if schedule.get(date_str) == '0':
+                    off_count_per_day[date_str] += 1
+        
+        # Check if any day has too many people off (more than 50% of staff)
+        max_allowed_off = max(1, total_employees // 2)
+        violations = []
+        
+        for date_str, count in off_count_per_day.items():
+            if count > max_allowed_off:
+                violations.append(f"Date {date_str}: {count} employees off (max allowed: {max_allowed_off})")
+        
+        self.tests_run += 1
+        if not violations:
+            self.tests_passed += 1
+            print(f"✅ Passed - Off days are balanced across staff")
+        else:
+            print(f"❌ Failed - {len(violations)} days with too many staff off:")
+            for violation in violations[:3]:
+                print(f"   • {violation}")
+        
+        return len(violations) == 0
+
+    def test_agsm_welcome_agent_only_9am(self, roster_data, employees):
+        """Test Rule: AGSM and Welcome Agent only have 9am shifts"""
+        print(f"\n🔍 Testing AGSM/Welcome Agent Only 9am Shifts...")
+        
+        roster = roster_data.get('roster', {})
+        year = roster_data.get('year')
+        month = roster_data.get('month')
+        num_days = calendar.monthrange(year, month)[1]
+        
+        # Create position map
+        position_map = {emp['id']: emp['position'] for emp in employees}
+        
+        violations = []
+        
+        for emp_id, schedule in roster.items():
+            if emp_id not in position_map:
+                continue
+                
+            position = position_map[emp_id]
+            
+            if position in ['AGSM', 'Welcome Agent']:
+                for day in range(1, num_days + 1):
+                    date_str = f"{year}-{month:02d}-{day:02d}"
+                    shift = schedule.get(date_str, '')
+                    
+                    # Should only have '9' (9am) or '0' (off) shifts
+                    if shift not in ['9', '0', 'V', 'L']:
+                        violations.append(f"{position} employee {emp_id}: shift '{shift}' on {date_str}")
+        
+        self.tests_run += 1
+        if not violations:
+            self.tests_passed += 1
+            print(f"✅ Passed - AGSM/Welcome Agent employees only have 9am shifts")
+        else:
+            print(f"❌ Failed - {len(violations)} violations found:")
+            for violation in violations[:3]:
+                print(f"   • {violation}")
+        
+        return len(violations) == 0
+
+    def test_night_shifts_five_day_blocks(self, roster_data, employees):
+        """Test Rule: Night shifts (23) appear in 5-day consecutive blocks"""
+        print(f"\n🔍 Testing Night Shifts in 5-Day Consecutive Blocks...")
+        
+        roster = roster_data.get('roster', {})
+        year = roster_data.get('year')
+        month = roster_data.get('month')
+        num_days = calendar.monthrange(year, month)[1]
+        
+        # Get flexible employees (not AGSM/Welcome Agent)
+        position_map = {emp['id']: emp['position'] for emp in employees}
+        flexible_employees = [emp_id for emp_id, pos in position_map.items() 
+                            if pos not in ['AGSM', 'Welcome Agent']]
+        
+        violations = []
+        
+        for emp_id in flexible_employees:
+            if emp_id not in roster:
+                continue
+                
+            schedule = roster[emp_id]
+            night_shifts = []
+            
+            # Find all night shifts for this employee
+            for day in range(1, num_days + 1):
+                date_str = f"{year}-{month:02d}-{day:02d}"
+                if schedule.get(date_str) == '23':
+                    night_shifts.append(day)
+            
+            if not night_shifts:
+                continue  # No night shifts for this employee
+            
+            # Check if night shifts are in consecutive blocks of 5
+            current_block = [night_shifts[0]]
+            blocks = []
+            
+            for i in range(1, len(night_shifts)):
+                if night_shifts[i] == night_shifts[i-1] + 1:
+                    current_block.append(night_shifts[i])
+                else:
+                    blocks.append(current_block)
+                    current_block = [night_shifts[i]]
+            blocks.append(current_block)
+            
+            # Each block should be exactly 5 days
+            for block in blocks:
+                if len(block) != 5:
+                    violations.append(f"Employee {emp_id}: night shift block of {len(block)} days (expected 5): {block}")
+        
+        self.tests_run += 1
+        if not violations:
+            self.tests_passed += 1
+            print(f"✅ Passed - Night shifts appear in 5-day consecutive blocks")
+        else:
+            print(f"❌ Failed - {len(violations)} violations found:")
+            for violation in violations[:3]:
+                print(f"   • {violation}")
+        
+        return len(violations) == 0
+
+    def test_no_am_pm_transition_without_off(self, roster_data, employees):
+        """Test Rule: No AM→PM transition without off day between"""
+        print(f"\n🔍 Testing No AM→PM Transition Without Off Day...")
+        
+        roster = roster_data.get('roster', {})
+        year = roster_data.get('year')
+        month = roster_data.get('month')
+        num_days = calendar.monthrange(year, month)[1]
+        
+        # Get flexible employees (not AGSM/Welcome Agent)
+        position_map = {emp['id']: emp['position'] for emp in employees}
+        flexible_employees = [emp_id for emp_id, pos in position_map.items() 
+                            if pos not in ['AGSM', 'Welcome Agent']]
+        
+        violations = []
+        
+        for emp_id in flexible_employees:
+            if emp_id not in roster:
+                continue
+                
+            schedule = roster[emp_id]
+            
+            for day in range(1, num_days):
+                today_date = f"{year}-{month:02d}-{day:02d}"
+                tomorrow_date = f"{year}-{month:02d}-{day+1:02d}"
+                
+                today_shift = schedule.get(today_date, '')
+                tomorrow_shift = schedule.get(tomorrow_date, '')
+                
+                # Check AM→PM transition (7→15)
+                if today_shift == '7' and tomorrow_shift == '15':
+                    violations.append(f"Employee {emp_id}: AM→PM transition {today_date}→{tomorrow_date}")
+                
+                # Check PM→AM transition (15→7)
+                if today_shift == '15' and tomorrow_shift == '7':
+                    violations.append(f"Employee {emp_id}: PM→AM transition {today_date}→{tomorrow_date}")
+        
+        self.tests_run += 1
+        if not violations:
+            self.tests_passed += 1
+            print(f"✅ Passed - No AM↔PM transitions without off day")
+        else:
+            print(f"❌ Failed - {len(violations)} violations found:")
+            for violation in violations[:3]:
+                print(f"   • {violation}")
+        
+        return len(violations) == 0
+
     def cleanup(self):
-        """Clean up created employees"""
-        print(f"\n🧹 Cleaning up {len(self.created_employee_ids)} created employees...")
-        for emp_id in self.created_employee_ids.copy():
-            self.test_delete_employee(emp_id)
         """Clean up created employees"""
         print(f"\n🧹 Cleaning up {len(self.created_employee_ids)} created employees...")
         for emp_id in self.created_employee_ids.copy():
