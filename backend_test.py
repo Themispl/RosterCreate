@@ -343,9 +343,13 @@ def main():
     emp3_id = tester.test_create_employee("Brown", "Mike", "AGSM")
     emp4_id = tester.test_create_employee("Davis", "Emma", "Welcome Agent")
     
-    # Test 3: Get employees
+    # Test 3: Get employees and check position order
     employees = tester.test_get_employees()
     print(f"   Found {len(employees)} employees in database")
+    
+    # Test position order
+    if employees:
+        tester.test_position_order(employees)
     
     # Test 4: Generate roster (if we have employees)
     if emp1_id and emp2_id:
