@@ -591,11 +591,14 @@ def main():
     # Test 1: Root endpoint
     tester.test_root_endpoint()
     
-    # Test 2: Create employees
-    emp1_id = tester.test_create_employee("Smith", "John", "GSC", "NAFSIKA")
-    emp2_id = tester.test_create_employee("Johnson", "Sarah", "GSA", "WELCOME AGENTS")
-    emp3_id = tester.test_create_employee("Brown", "Mike", "AGSM")
-    emp4_id = tester.test_create_employee("Davis", "Emma", "Welcome Agent")
+    # Test 2: Create test employees with all required positions
+    print("\n📝 Creating test employees...")
+    emp1_id = tester.test_create_employee("Smith", "John", "AGSM")
+    emp2_id = tester.test_create_employee("Johnson", "Sarah", "GSC")
+    emp3_id = tester.test_create_employee("Williams", "Mike", "GSA")
+    emp4_id = tester.test_create_employee("Brown", "Lisa", "Welcome Agent")
+    emp5_id = tester.test_create_employee("Davis", "Tom", "GSC")
+    emp6_id = tester.test_create_employee("Miller", "Anna", "GSA")
     
     # Test 3: Get employees and check position order
     employees = tester.test_get_employees()
@@ -605,16 +608,14 @@ def main():
     if employees:
         tester.test_position_order(employees)
     
-    # Test 4: Generate roster (if we have employees)
-    if emp1_id and emp2_id:
+    # Test 4: Generate roster and test all rules (if we have employees)
+    employee_ids = [emp_id for emp_id in [emp1_id, emp2_id, emp3_id, emp4_id, emp5_id, emp6_id] if emp_id]
+    
+    if len(employee_ids) >= 4:  # Need at least 4 employees for meaningful testing
         current_year = datetime.now().year
         current_month = datetime.now().month
         
-        employee_ids = [emp1_id, emp2_id]
-        if emp3_id:
-            employee_ids.append(emp3_id)
-        if emp4_id:
-            employee_ids.append(emp4_id)
+        print(f"\n📅 Testing roster generation for {current_month}/{current_year}...")
         
         # Test month view
         roster_data = tester.test_generate_roster(
@@ -628,7 +629,17 @@ def main():
             print(f"   Generated roster with {len(roster_data.get('roster', {}))} employee schedules")
             print(f"   Days info: {len(roster_data.get('days_info', []))} days")
             
-            # Test business logic constraints
+            print("\n🔍 Testing Hotel Roster Rules...")
+            print("-" * 40)
+            
+            # Test all specific roster rules
+            tester.test_exactly_two_consecutive_off_days_per_week(roster_data)
+            tester.test_balanced_off_days(roster_data)
+            tester.test_agsm_welcome_agent_only_9am(roster_data, employees)
+            tester.test_night_shifts_five_day_blocks(roster_data, employees)
+            tester.test_no_am_pm_transition_without_off(roster_data, employees)
+            
+            # Test existing business logic constraints
             tester.test_night_shift_constraints(roster_data)
             tester.test_days_off_consecutive(roster_data)
             
@@ -637,6 +648,8 @@ def main():
             
             # Test 5: Excel export
             tester.test_export_excel(current_year, current_month, employee_ids)
+    else:
+        print("❌ Not enough employees created for roster testing")
     
     # Cleanup
     tester.cleanup()
