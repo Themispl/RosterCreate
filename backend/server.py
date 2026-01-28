@@ -391,7 +391,7 @@ async def export_excel(request: RosterRequest):
     # Create Excel workbook
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Roster {request.month:02d}/{request.year}"
+    ws.title = f"Roster {request.month:02d}-{request.year}"
     
     num_days = calendar.monthrange(request.year, request.month)[1]
     weekday_names = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
