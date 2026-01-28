@@ -773,9 +773,13 @@ function App() {
                 <tbody>
                   {employees.map((emp) => (
                     <tr key={emp.id} data-testid={`roster-row-${emp.id}`}>
-                      <td className="sticky-col employee-cell" style={{ minWidth: '140px', maxWidth: '160px' }}>
-                        <div className="employee-name">{emp.last_name}</div>
-                        <div className="employee-position">{emp.first_name} • {emp.position}</div>
+                      <td className="sticky-col employee-cell" style={{ width: '120px' }}>
+                        <div className="employee-name" title={`${emp.last_name} ${emp.first_name}`}>
+                          {emp.last_name}
+                        </div>
+                        <div className="employee-position" title={`${emp.first_name} - ${emp.position}`}>
+                          {emp.first_name} • {emp.position}
+                        </div>
                       </td>
                       {daysInfo.map((day) => {
                         const shift = roster[emp.id]?.[day.date] || "";
