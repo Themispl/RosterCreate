@@ -18,14 +18,13 @@ Create a program that generates a monthly and weekly staff roster for a hotel, e
 8. Excel export with formatting and colors
 
 ## NEW Scheduling Constraints (Updated December 2025)
-- **5 work days + 2 days off per week** (mandatory)
-- **Minimum 11 hours between shifts** - No AM→PM next day without off day
-- Use days off to transition between shift types
-- Night shift: 5 consecutive days, then 2 days off, then PM shift
-- Days off MUST be consecutive (together)
-- Alternate weeks: Morning one week, Afternoon next week
+- **5 work days + 2 consecutive days off per week** (EXACTLY)
+- **Minimum 11 hours between shifts** - No AM→PM or PM→AM without off day
+- Days off used to transition between shift types
+- AGSM and Welcome Agent = 9am shifts ONLY
 - Max 5 night shifts per person per month
-- Balance days off across staff (not everyone off same day)
+- Days off balanced across staff (staggered - not everyone off same day)
+- Days off per week always consecutive
 
 ## Color Coding (User Customizable)
 | Shift | Default Color | Hex |
