@@ -209,38 +209,71 @@ def generate_roster(year: int, month: int, employees: List[dict],
     flexible = [e for e in employees if e['position'] not in ['AGSM', 'Welcome Agent']]
     
     # STEP 1: Assign EXACTLY 2 consecutive off days per week for each employee
+    # Use actual calendar weeks (Mon-Sun)
+    first_day = datetime(year, month, 1)
+    first_weekday = first_day.weekday()  # 0=Mon
+    
     for emp_idx, emp in enumerate(employees):
         emp_id = emp['id']
         
-        # Calculate off day start based on employee index (staggered)
-        base_off_day = emp_idx % 6  # 0-5 (Mon-Sat)
+        # Calculate base off day for this employee (staggered)
+        base_off_day = emp_idx % 5  # 0-4 (Mon-Fri, leaving room for consecutive day)
         
-        for week in range(6):
-            week_start = week * 7 + 1
-            if week_start > num_days:
-                break
+        # Find each Monday in the month to define weeks
+        d = 1
+        week_num = 0
+        while d <= num_days:
+            date_obj = datetime(year, month, d)
+            weekday = date_obj.weekday()
             
-            # Find the target off day in this week
-            off_day_found = False
-            for d in range(week_start, min(week_start + 7, num_days + 1)):
-                date_obj = datetime(year, month, d)
-                weekday = date_obj.weekday()
+            # Find start of this calendar week
+            if weekday == 0 or d == 1:  # Monday or first day of month
+                # This starts a new week
+                week_start = d
+                week_end = min(d + (6 - weekday), num_days)  # End at Sunday or month end
                 
-                # Rotate off days each week for variety
-                target_off_weekday = (base_off_day + week) % 6
+                # Calculate off day for this employee this week
+                target_off_weekday = (base_off_day + week_num) % 5  # Rotate each week
                 
-                if weekday == target_off_weekday:
-                    date_str = f"{year}-{month:02d}-{d:02d}"
-                    next_date_str = f"{year}-{month:02d}-{d+1:02d}" if d + 1 <= num_days else None
-                    
-                    # Only set if not vacation/leave
-                    if roster[emp_id].get(date_str) is None:
-                        roster[emp_id][date_str] = '0'
-                    if next_date_str and roster[emp_id].get(next_date_str) is None:
-                        roster[emp_id][next_date_str] = '0'
-                    
-                    off_day_found = True
-                    break
+                # Find the actual days
+                off_assigned = 0
+                for check_d in range(week_start, week_end + 1):
+                    check_date_obj = datetime(year, month, check_d)
+                    if check_date_obj.weekday() == target_off_weekday:
+                        # First off day
+                        date_str = f"{year}-{month:02d}-{check_d:02d}"
+                        if roster[emp_id].get(date_str) is None:
+                            roster[emp_id][date_str] = '0'
+                            off_assigned += 1
+                        
+                        # Second consecutive off day
+                        if check_d + 1 <= num_days:
+                            next_date_str = f"{year}-{month:02d}-{check_d+1:02d}"
+                            if roster[emp_id].get(next_date_str) is None:
+                                roster[emp_id][next_date_str] = '0'
+                                off_assigned += 1
+                        break
+                
+                # If we couldn't assign 2 off days, try alternative days
+                if off_assigned < 2:
+                    for check_d in range(week_start, week_end + 1):
+                        date_str = f"{year}-{month:02d}-{check_d:02d}"
+                        if roster[emp_id].get(date_str) is None:
+                            roster[emp_id][date_str] = '0'
+                            off_assigned += 1
+                            # Try to get consecutive
+                            if off_assigned < 2 and check_d + 1 <= num_days:
+                                next_date_str = f"{year}-{month:02d}-{check_d+1:02d}"
+                                if roster[emp_id].get(next_date_str) is None:
+                                    roster[emp_id][next_date_str] = '0'
+                                    off_assigned += 1
+                            if off_assigned >= 2:
+                                break
+                
+                week_num += 1
+                d = week_end + 1
+            else:
+                d += 1
     
     # STEP 2: Assign 9am shifts to AGSM and Welcome Agent
     for emp in fixed_9am:
@@ -252,48 +285,48 @@ def generate_roster(year: int, month: int, employees: List[dict],
     
     # STEP 3: Assign night shifts (5 consecutive days, max 5 per person per month)
     night_count = {e['id']: 0 for e in flexible}
-    night_assigned_this_week = set()
+    current_night_worker = None
+    night_days_done = 0
     
-    # We need one person on night each day
     for d in range(1, num_days + 1):
         date_str = f"{year}-{month:02d}-{d:02d}"
         date_obj = datetime(year, month, d)
         weekday = date_obj.weekday()
         
-        # Start new 5-day night rotation on Monday
-        if weekday == 0:
-            night_assigned_this_week = set()
-            
-            # Find employee who can do night shift this week
+        # Start new night rotation
+        if current_night_worker is None or night_days_done >= 5:
+            # Find next eligible employee
             for emp in flexible:
                 emp_id = emp['id']
                 if night_count[emp_id] < 5:
-                    # Check if they have off days during this week's night rotation
-                    can_do_night = True
+                    # Check if this employee has off days in next 5 days
+                    can_do = True
                     for check_d in range(d, min(d + 5, num_days + 1)):
                         check_date = f"{year}-{month:02d}-{check_d:02d}"
                         if roster[emp_id].get(check_date) == '0':
-                            can_do_night = False
+                            can_do = False
                             break
-                    
-                    if can_do_night:
-                        night_assigned_this_week.add(emp_id)
+                    if can_do:
+                        current_night_worker = emp_id
+                        night_days_done = 0
                         break
         
-        # Assign night shift to designated person
-        for emp_id in night_assigned_this_week:
-            if roster[emp_id].get(date_str) is None and night_count[emp_id] < 5:
-                roster[emp_id][date_str] = '23'
-                night_count[emp_id] += 1
+        # Assign night shift
+        if current_night_worker and night_days_done < 5:
+            if roster[current_night_worker].get(date_str) is None:
+                roster[current_night_worker][date_str] = '23'
+                night_count[current_night_worker] += 1
+                night_days_done += 1
+            else:
+                # Can't assign night here, skip
+                night_days_done += 1
     
     # STEP 4: Assign morning/afternoon shifts with 11-hour rest rule
     last_shift = {e['id']: None for e in flexible}
-    shift_type = {}  # Track current shift type per employee
+    shift_type = {}
     
     for emp_idx, emp in enumerate(flexible):
-        emp_id = emp['id']
-        # Alternate starting shift type
-        shift_type[emp_id] = 'morning' if emp_idx % 2 == 0 else 'afternoon'
+        shift_type[emp['id']] = 'morning' if emp_idx % 2 == 0 else 'afternoon'
     
     for d in range(1, num_days + 1):
         date_str = f"{year}-{month:02d}-{d:02d}"
@@ -308,26 +341,24 @@ def generate_roster(year: int, month: int, employees: List[dict],
                 last_shift[emp_id] = roster[emp_id][date_str]
                 continue
             
-            # Get target shift type
             target = shift_type[emp_id]
             prev = last_shift[emp_id]
             
-            # 11-hour rest rule enforcement
+            # 11-hour rest rule
             if prev == '7' and target == 'afternoon':
-                # Can't go AM→PM, need off day or stay AM
+                # Stay on morning
                 roster[emp_id][date_str] = '7'
                 last_shift[emp_id] = '7'
             elif prev == '15' and target == 'morning':
-                # Can't go PM→AM, need off day or stay PM
+                # Stay on afternoon
                 roster[emp_id][date_str] = '15'
                 last_shift[emp_id] = '15'
             elif prev == '23':
-                # After night, can only do afternoon
+                # After night, go to afternoon
                 roster[emp_id][date_str] = '15'
                 last_shift[emp_id] = '15'
                 shift_type[emp_id] = 'afternoon'
             else:
-                # Normal assignment
                 if target == 'morning':
                     roster[emp_id][date_str] = '7'
                     last_shift[emp_id] = '7'
@@ -335,15 +366,17 @@ def generate_roster(year: int, month: int, employees: List[dict],
                     roster[emp_id][date_str] = '15'
                     last_shift[emp_id] = '15'
         
-        # At end of week (Sunday), switch shift types for next week
+        # End of week - switch shift types
         if weekday == 6:
             for emp in flexible:
                 emp_id = emp['id']
                 shift_type[emp_id] = 'afternoon' if shift_type[emp_id] == 'morning' else 'morning'
     
-    # STEP 5: Fill any remaining None values
+    # STEP 5: Final validation - ensure no None values and validate consecutive offs
     for emp in employees:
         emp_id = emp['id']
+        
+        # Fill any remaining None values
         for d in range(1, num_days + 1):
             date_str = f"{year}-{month:02d}-{d:02d}"
             if roster[emp_id].get(date_str) is None:
@@ -351,6 +384,23 @@ def generate_roster(year: int, month: int, employees: List[dict],
                     roster[emp_id][date_str] = '9'
                 else:
                     roster[emp_id][date_str] = '15'
+        
+        # Ensure off days are consecutive
+        sorted_dates = sorted(roster[emp_id].keys())
+        i = 0
+        while i < len(sorted_dates):
+            date_str = sorted_dates[i]
+            if roster[emp_id][date_str] == '0':
+                # Check if next day is also off
+                if i + 1 < len(sorted_dates):
+                    next_date = sorted_dates[i + 1]
+                    if roster[emp_id].get(next_date) != '0':
+                        # Make it consecutive
+                        if roster[emp_id].get(next_date) not in ['V', 'L']:
+                            roster[emp_id][next_date] = '0'
+                i += 2  # Skip the pair
+            else:
+                i += 1
     
     return roster
 
