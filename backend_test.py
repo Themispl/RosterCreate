@@ -95,18 +95,22 @@ class HotelRosterAPITester:
             self.created_employee_ids.remove(employee_id)
         return success
 
-    def test_generate_roster(self, year, month, employee_ids):
+    def test_generate_roster(self, year, month, employee_ids, view_type="month", week_number=None):
         """Test roster generation"""
         data = {
             "year": year,
             "month": month,
             "employees": employee_ids,
             "vacation_days": {},
-            "leave_days": {}
+            "leave_days": {},
+            "view_type": view_type
         }
         
+        if view_type == "week" and week_number:
+            data["week_number"] = week_number
+        
         success, response = self.run_test(
-            f"Generate Roster ({month}/{year})",
+            f"Generate Roster ({month}/{year}) - {view_type.title()} View" + (f" Week {week_number}" if week_number else ""),
             "POST",
             "roster/generate",
             200,
