@@ -88,10 +88,10 @@
 .roster-table .employee-cell {
     background-color: #FFFFFF;
     text-align: left;
-    padding: 8px 12px;
-    font-size: 13px;
-    min-width: 140px;
-    max-width: 160px;
+    padding: 6px 10px;
+    font-size: 12px;
+    min-width: 120px;
+    width: 120px;
 }
 
 .roster-table .employee-name {
