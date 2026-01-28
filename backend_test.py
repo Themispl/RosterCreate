@@ -154,7 +154,175 @@ class HotelRosterAPITester:
             print(f"❌ Failed - Error: {str(e)}")
             return False
 
-    def cleanup(self):
+    def test_position_order(self, employees):
+        """Test that employees are returned in correct position order: AGSM → GSC → GSA → Welcome Agent"""
+        print(f"\n🔍 Testing Position Order...")
+        
+        # Expected order
+        expected_order = ["AGSM", "GSC", "GSA", "Welcome Agent"]
+        
+        # Group employees by position
+        positions_found = []
+        for emp in employees:
+            if emp['position'] not in positions_found:
+                positions_found.append(emp['position'])
+        
+        # Check if positions appear in correct order
+        correct_order = True
+        last_position_index = -1
+        
+        for position in positions_found:
+            if position in expected_order:
+                current_index = expected_order.index(position)
+                if current_index < last_position_index:
+                    correct_order = False
+                    break
+                last_position_index = current_index
+        
+        self.tests_run += 1
+        if correct_order:
+            self.tests_passed += 1
+            print(f"✅ Passed - Position order correct: {' → '.join(positions_found)}")
+        else:
+            print(f"❌ Failed - Position order incorrect: {' → '.join(positions_found)}")
+            print(f"   Expected order: {' → '.join(expected_order)}")
+        
+        return correct_order
+
+    def test_week_view_generation(self, year, month, employee_ids):
+        """Test week view roster generation"""
+        print(f"\n🔍 Testing Week View Generation...")
+        
+        # Test week 1
+        week1_data = self.test_generate_roster(year, month, employee_ids, "week", 1)
+        if not week1_data:
+            return False
+            
+        # Check that week view returns only 7 days or less
+        days_count = len(week1_data.get('days_info', []))
+        week_view_correct = days_count <= 7
+        
+        self.tests_run += 1
+        if week_view_correct:
+            self.tests_passed += 1
+            print(f"✅ Passed - Week view returns {days_count} days (≤7)")
+        else:
+            print(f"❌ Failed - Week view returns {days_count} days (should be ≤7)")
+        
+        return week_view_correct
+
+    def test_night_shift_constraints(self, roster_data):
+        """Test that night shifts (23) appear in consecutive blocks"""
+        print(f"\n🔍 Testing Night Shift Constraints...")
+        
+        roster = roster_data.get('roster', {})
+        if not roster:
+            print("❌ No roster data to test")
+            return False
+        
+        night_shift_violations = 0
+        total_employees_checked = 0
+        
+        for emp_id, schedule in roster.items():
+            total_employees_checked += 1
+            dates = sorted(schedule.keys())
+            night_shifts = []
+            
+            # Find all night shift dates for this employee
+            for date in dates:
+                if schedule[date] == '23':
+                    night_shifts.append(date)
+            
+            if len(night_shifts) > 1:
+                # Check if night shifts are consecutive
+                for i in range(len(night_shifts) - 1):
+                    current_date = datetime.strptime(night_shifts[i], '%Y-%m-%d')
+                    next_date = datetime.strptime(night_shifts[i + 1], '%Y-%m-%d')
+                    
+                    # If there's a gap of more than 1 day, it's not consecutive
+                    if (next_date - current_date).days > 1:
+                        # Check if there are any non-night shifts in between
+                        gap_start = current_date
+                        gap_end = next_date
+                        has_non_night_in_gap = False
+                        
+                        current_check = gap_start
+                        while current_check < gap_end:
+                            current_check += timedelta(days=1)
+                            check_date_str = current_check.strftime('%Y-%m-%d')
+                            if check_date_str in schedule and schedule[check_date_str] not in ['23', '0']:
+                                has_non_night_in_gap = True
+                                break
+                        
+                        if has_non_night_in_gap:
+                            night_shift_violations += 1
+                            break
+        
+        self.tests_run += 1
+        if night_shift_violations == 0:
+            self.tests_passed += 1
+            print(f"✅ Passed - Night shifts appear in proper consecutive blocks")
+        else:
+            print(f"❌ Failed - {night_shift_violations} employees have non-consecutive night shifts")
+        
+        return night_shift_violations == 0
+
+    def test_days_off_consecutive(self, roster_data):
+        """Test that days off (0) appear in consecutive pairs"""
+        print(f"\n🔍 Testing Days Off Consecutive Constraint...")
+        
+        roster = roster_data.get('roster', {})
+        if not roster:
+            print("❌ No roster data to test")
+            return False
+        
+        violations = 0
+        total_employees_checked = 0
+        
+        for emp_id, schedule in roster.items():
+            total_employees_checked += 1
+            dates = sorted(schedule.keys())
+            off_days = []
+            
+            # Find all off days for this employee
+            for date in dates:
+                if schedule[date] == '0':
+                    off_days.append(date)
+            
+            if len(off_days) > 0:
+                # Check if off days are in consecutive pairs
+                isolated_off_days = 0
+                
+                for i, off_date in enumerate(off_days):
+                    current_date = datetime.strptime(off_date, '%Y-%m-%d')
+                    
+                    # Check if this off day has an adjacent off day
+                    has_adjacent = False
+                    
+                    # Check previous day
+                    prev_date = (current_date - timedelta(days=1)).strftime('%Y-%m-%d')
+                    if prev_date in schedule and schedule[prev_date] == '0':
+                        has_adjacent = True
+                    
+                    # Check next day
+                    next_date = (current_date + timedelta(days=1)).strftime('%Y-%m-%d')
+                    if next_date in schedule and schedule[next_date] == '0':
+                        has_adjacent = True
+                    
+                    if not has_adjacent:
+                        isolated_off_days += 1
+                
+                if isolated_off_days > 0:
+                    violations += 1
+        
+        self.tests_run += 1
+        if violations == 0:
+            self.tests_passed += 1
+            print(f"✅ Passed - Days off appear in consecutive pairs")
+        else:
+            print(f"❌ Failed - {violations} employees have isolated off days")
+        
+        return violations == 0
         """Clean up created employees"""
         print(f"\n🧹 Cleaning up {len(self.created_employee_ids)} created employees...")
         for emp_id in self.created_employee_ids.copy():
