@@ -96,6 +96,8 @@
 .roster-table .employee-name {
     font-weight: 600;
     color: #0F172A;
+    font-size: 14px;
+    white-space: nowrap;
 }
 
 .roster-table .employee-position {
