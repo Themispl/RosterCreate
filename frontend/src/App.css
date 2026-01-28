@@ -105,8 +105,11 @@
 }
 
 .roster-table .employee-position {
-    font-size: 11px;
+    font-size: 10px;
     color: #64748B;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Group Header Row */
