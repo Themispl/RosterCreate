@@ -32,8 +32,9 @@ jobs:
           cd frontend
           npm run build --legacy-peer-deps
         env:
-          # If your backend is hosted elsewhere, put that URL here
-          REACT_APP_API_URL: https://your-backend-api.com 
+          CI: false
+          NODE_ENV: production
+          run: npm run build --legacy-peer-deps
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
