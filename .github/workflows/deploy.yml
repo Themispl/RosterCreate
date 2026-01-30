@@ -24,6 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd frontend
+          npm install ajv@^8.0.0 ajv-keywords@^5.0.0 --save-dev --legacy-peer-deps
           npm install --legacy-peer-deps
 
       - name: Build
